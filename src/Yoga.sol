@@ -45,19 +45,8 @@ library LibSimpleModifyLiquidityParams {
         }
         return a;
     }
-
-    function eq(SimpleModifyLiquidityParams memory a, SimpleModifyLiquidityParams memory b)
-        internal
-        pure
-        returns (bool r)
-    {
-        assembly ("memory-safe") {
-            r := eq(a, b)
-        }
-    }
 }
 
-using LibSimpleModifyLiquidityParams for SimpleModifyLiquidityParams;
 using LibSimpleModifyLiquidityParams for SimpleModifyLiquidityParams[];
 
 library CurrencySafeTransferLib {
@@ -386,8 +375,7 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
             }
         } else if (
             (
-                rightTick =
-                    _treeKeyToTick((rightTickPtr = subPositions.nearestAfter(_tickToTreeKey(params.tickUpper))).value())
+                rightTick = _treeKeyToTick((rightTickPtr = leftTickPtr.next()).value())
             ) != params.tickUpper
         ) {
             revert SplitTooComplicated();

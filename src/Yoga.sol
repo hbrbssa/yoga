@@ -185,27 +185,69 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
             if (params.liquidityDelta < 0) {
                 revert NegativeLiquidity();
             }
-
             // add new liquidity beyond the current left terminus of the tick ranges
             subPositions.insert(_tickToTreeKey(params.tickLower));
-            SimpleModifyLiquidityParams memory i = actions[0];
-            i.tickLower = params.tickLower;
-            i.tickUpper = params.tickUpper;
-            i.liquidityDelta = params.liquidityDelta;
-            return actions.truncate(1);
-        } else if ((leftTick = _treeKeyToTick(leftTickPtr.value())) == params.tickLower) {
-            if ((rightTickPtr = leftTickPtr.next()) == 0) {
-                if (params.liquidityDelta < 0) {
-                    revert NegativeLiquidity();
-                }
 
-                // add new liquidity beyond the current right terminus of the tick ranges
-                subPositions.insert(_tickToTreeKey(rightTick = params.tickUpper));
+            bytes32 afterTickPtr = rightTickPtr.next();
+            // `afterTickPtr` is guaranteed to be non-null. if it were null,
+            // then there would be no sub-positions managed by this NFT, and the
+            // NFT would've been burned
+            int24 afterTick = _treeKeyToTick(afterTickPtr.value());
+            if (_getLiquidity(tokenId, key, params.tickUpper, afterTick) == uint256(params.liquidityDelta)) {
+                subPositions.remove(_tickToTreeKey(params.tickUpper));
+
+                SimpleModifyLiquidityParams memory i = actions[0];
+                i.tickLower = params.tickUpper;
+                i.tickUpper = afterTick;
+                i.liquidityDelta = -params.liquidityDelta;
+
+                i = actions[1];
+                i.tickLower = params.tickLower;
+                i.tickUpper = afterTick;
+                i.liquidityDelta = params.liquidityDelta;
+
+                return actions.truncate(2);
+            } else {
                 SimpleModifyLiquidityParams memory i = actions[0];
                 i.tickLower = params.tickLower;
                 i.tickUpper = params.tickUpper;
                 i.liquidityDelta = params.liquidityDelta;
                 return actions.truncate(1);
+            }
+        } else if ((leftTick = _treeKeyToTick(leftTickPtr.value())) == params.tickLower) {
+            if ((rightTickPtr = leftTickPtr.next()) == 0) {
+                if (params.liquidityDelta < 0) {
+                    revert NegativeLiquidity();
+                }
+                // add new liquidity beyond the current right terminus of the tick ranges
+                subPositions.insert(_tickToTreeKey(rightTick = params.tickUpper));
+
+                bytes32 beforeTickPtr = rightTickPtr.next();
+                // `beforeTickPtr` is guaranteed to be non-null. if it were
+                // null, then there would be no sub-positions managed by this
+                // NFT, and the NFT would've been burned
+                int24 beforeTick = _treeKeyToTick(beforeTickPtr.value());
+                if (_getLiquidity(tokenId, key, beforeTick, params.tickLower) == uint256(params.liquidityDelta)) {
+                    subPositions.remove(_tickToTreeKey(params.tickLower));
+
+                    SimpleModifyLiquidityParams memory i = actions[0];
+                    i.tickLower = beforeTick;
+                    i.tickUpper = params.tickLower;
+                    i.liquidityDelta = -params.liquidityDelta;
+
+                    i = actions[1];
+                    i.tickLower = beforeTick;
+                    i.tickUpper = params.tickUpper;
+                    i.liquidityDelta = params.liquidityDelta;
+
+                    return actions.truncate(2);
+                } else {
+                    SimpleModifyLiquidityParams memory i = actions[0];
+                    i.tickLower = params.tickLower;
+                    i.tickUpper = params.tickUpper;
+                    i.liquidityDelta = params.liquidityDelta;
+                    return actions.truncate(1);
+                }
             } else if ((rightTick = _treeKeyToTick(rightTickPtr.value())) == params.tickUpper) {
                 // the liquidity modification happens exactly on an existing
                 // range of ticks. we don't need to mutate the tree, unless
@@ -228,7 +270,10 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                     if (int256(beforeLiquidity) + i.liquidityDelta == 0) {
                         subPositions.remove(_tickToTreeKey(params.tickLower));
                         if (afterTickPtr == 0) {
+                            // `remove` here deletes the last element of the
+                            // tree. the storage rooted here is now zeroed.
                             subPositions.remove(_tickToTreeKey(params.tickUpper));
+                            // we get a gas refund by zeroing this storage, so why not
                             delete tokenInfo.key;
                             _burn(tokenId);
                         } else {

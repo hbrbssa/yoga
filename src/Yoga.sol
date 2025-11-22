@@ -39,9 +39,18 @@ library CurrencySafeTransferLib {
 }
 
 contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ ReentrancyGuardTransient {
+    using SafeTransferLib for address;
     using CurrencySafeTransferLib for Currency;
     using RedBlackTreeLib for RedBlackTreeLib.Tree;
     using RedBlackTreeLib for bytes32;
+
+    error SplitTooComplicated();
+
+    modifier onlyOwnerOrApproved(uint256 tokenId) {
+        if (!_isApprovedOrOwner(msg.sender, tokenId)) {
+            revert NotOwnerNorApproved();
+        }
+    }
 
     IPoolManager public constant POOL_MANAGER = IPoolManager(0x1F98400000000000000000000000000000000004);
 
@@ -67,7 +76,7 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
         external
         payable
         nonReentrant
-        returns (uint256 tokenId)
+        returns (uint256 tokenId, BalanceDelta delta)
     {
         unchecked {
             tokenId = nextTokenId++;
@@ -78,9 +87,55 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
 
         SimpleModifyLiquidityParams[] memory paramsArray = new SimpleModifyLiquidityParams[](1);
         paramsArray[0] = params;
-        POOL_MANAGER.unlock(abi.encode(msg.sender, address(0), key, bytes32(tokenId), params));
+        delta = abi.decode(POOL_MANAGER.unlock(abi.encode(msg.sender, payable(msg.sender), key, bytes32(tokenId), params)), (BalanceDelta));
 
         _safeMint(msg.sender, tokenId);
+        if (address(this).balance != 0) {
+            msg.sender.safeTransferAllETH();
+        }
+    }
+
+    function modify(uint256 tokenId, PoolKey calldata key, SimpleModifyLiquidityParams calldata params) external payable nonReentrant onlyOwnerOrApproved(tokenId) returns (BalanceDelta delta) {
+        SubPositions storage subPositions = _subPositions[tokenId];
+        int24 leftTick = _treeKeyToTick(subPositions.tree.nearestBefore(_tickToTreeKey(params.tickLower)).value());
+
+        if (leftTick == params.tickLower) {
+            int24 rightTick = _treeKeyToTick(subPositions.tree.nearestAfter(_tickToTreeKey(params.tickUpper)).value());
+            if (rightTick < _MIN_TICK) {
+                // extend position on the right
+
+            } else {
+                if (... == -params.liquidityDelta) {
+                    // close the left portion of a subposition
+
+                }
+                // mutate subposition on the left (params.tickUpper is the split point)
+
+                // TODO: merge the new left subposition with the next-rightward subposition if they have the same liquidity
+            }
+        } else {
+            if (_treeKeyToTick(subPositions.tree.nearestAfter(_tickToTreeKey(params.tickUpper)).value()) != params.tickUpper) {
+                // tried to mutate multiple subpositions, make 2 splits of subpositions, or extend the position on both ends
+                revert SplitTooComplicated();
+            }
+
+            if (leftTick < _MIN_TICK) {
+                // extend position on the left
+
+            } else {
+                if (... == -params.liquidityDelta) {
+                    // close the right portion of a subposition
+
+                }
+                // mutate subposition on the right (params.tickLower is the split point)
+
+                // TODO: merge the new right subposition with the next-rightward subposition if they have the same liquidity
+            }
+        }
+
+        if (address(this).balance != 0) {
+            msg.sender.safeTransferAllETH();
+        }
     }
 
     function _settle(address owner, address payable recipient, Currency currency, int128 amount) private {
@@ -89,10 +144,10 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
             unchecked {
                 debt = -int256(amount);
             }
+            POOL_MANAGER.sync(currency);
             if (currency.isAddressZero()) {
                 POOL_MANAGER.settle{value: debt}();
             } else {
-                POOL_MANAGER.sync(currency);
                 currency.safeTransferFrom(owner, address(POOL_MANAGER), debt);
                 POOL_MANAGER.settle();
             }
@@ -127,7 +182,7 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
         _settle(owner, recipient, key.currency0, delta.amount0());
         _settle(owner, recipient, key.currency1, delta.amount1());
 
-        return "";
+        return abi.encode(delta);
     }
 
     function getTicks(uint256 tokenId) external view returns (int24[] memory) {

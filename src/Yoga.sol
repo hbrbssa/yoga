@@ -118,6 +118,9 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
         uint128 currency0Max,
         uint128 currency1Max
     ) external payable nonReentrant returns (uint256 tokenId, BalanceDelta delta) {
+        if (params.liquidityDelta < 0) {
+            revert NegativeLiquidity();
+        }
         unchecked {
             tokenId = nextTokenId++;
         }
@@ -210,6 +213,9 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
 
                 uint256 beforeLiquidity = _getLiquidity(tokenId, key, leftTick, params.tickUpper);
                 int256 netLiquidity = int256(beforeLiquidity) + params.liquidityDelta;
+                if (netLiquidity < 0) {
+                    revert NegativeLiquidity();
+                }
 
                 SimpleModifyLiquidityParams memory i = actions[0];
                 i.tickLower = params.tickLower;

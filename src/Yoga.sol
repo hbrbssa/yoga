@@ -32,16 +32,25 @@ struct SimpleModifyLiquidityParams {
 }
 
 library LibSimpleModifyLiquidityParams {
-    function truncate(SimpleModifyLiquidityParams[] memory a, uint256 l) internal pure {
+    function truncate(SimpleModifyLiquidityParams[] memory a, uint256 l)
+        internal
+        pure
+        returns (SimpleModifyLiquidityParams[] memory)
+    {
         if (l > a.length) {
             Panic.panic(Panic.ARRAY_OUT_OF_BOUNDS);
         }
         assembly ("memory-safe") {
             mstore(a, l)
         }
+        return a;
     }
 
-    function eq(SimpleModifyLiquidityParams memory a, SimpleModifyLiquidityParams memory b) internal pure returns (bool r) {
+    function eq(SimpleModifyLiquidityParams memory a, SimpleModifyLiquidityParams memory b)
+        internal
+        pure
+        returns (bool r)
+    {
         assembly ("memory-safe") {
             r := eq(a, b)
         }
@@ -67,6 +76,7 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
 
     error SplitTooComplicated();
     error NegativeLiquidity();
+    error ZeroDelta();
 
     modifier onlyOwnerOrApproved(uint256 tokenId) {
         if (!_isApprovedOrOwner(msg.sender, tokenId)) {
@@ -153,18 +163,14 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
         );
     }
 
-    function modify(address payable recipient, uint256 tokenId, SimpleModifyLiquidityParams calldata params)
-        external
-        payable
-        nonReentrant
-        onlyOwnerOrApproved(tokenId)
-        returns (BalanceDelta delta)
-    {
-        SimpleModifyLiquidityParams[] memory actions = new SimpleModifyLiquidityParams[](4);
-
-        TokenInfo storage tokenInfo = _tokenInfo[tokenId];
+    function _populateActions(
+        uint256 tokenId,
+        SimpleModifyLiquidityParams calldata params,
+        TokenInfo storage tokenInfo,
+        PoolKey memory key
+    ) private returns (SimpleModifyLiquidityParams[] memory actions) {
+        actions = new SimpleModifyLiquidityParams[](4);
         RedBlackTreeLib.Tree storage subPositions = tokenInfo.subPositions;
-        PoolKey memory key = tokenInfo.key;
 
         bytes32 leftTickPtr = subPositions.nearestBefore(_tickToTreeKey(params.tickLower));
         int24 leftTick;
@@ -186,7 +192,7 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
             i.tickLower = params.tickLower;
             i.tickUpper = params.tickUpper;
             i.liquidityDelta = params.liquidityDelta;
-            actions.truncate(1);
+            return actions.truncate(1);
         } else if ((leftTick = _treeKeyToTick(leftTickPtr.value())) == params.tickLower) {
             if ((rightTickPtr = leftTickPtr.next()) == 0) {
                 if (params.liquidityDelta < 0) {
@@ -199,7 +205,7 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                 i.tickLower = params.tickLower;
                 i.tickUpper = params.tickUpper;
                 i.liquidityDelta = params.liquidityDelta;
-                actions.truncate(1);
+                return actions.truncate(1);
             } else if ((rightTick = _treeKeyToTick(rightTickPtr.value())) == params.tickUpper) {
                 // the liquidity modification happens exactly on an existing
                 // range of ticks. we don't need to mutate the tree, unless
@@ -212,43 +218,59 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                 i.tickLower = params.tickLower;
                 i.tickUpper = params.tickUpper;
                 i.liquidityDelta = params.liquidityDelta;
-                // TODO: truncate
 
                 bytes32 beforeTickPtr = leftTickPtr.prev();
+                bytes32 afterTickPtr = rightTickPtr.next();
                 if (beforeTickPtr == 0) {
                     if (int256(beforeLiquidity) + i.liquidityDelta == 0) {
                         subPositions.remove(_tickToTreeKey(params.tickLower));
-                    }
-                } else {
-                    int24 beforeTick;
-                    if (_getLiquidity(tokenId, key, beforeTick = _treeKeyToTick(beforeTickPtr.value()), params.tickLower) == netLiquidity) {
-                        i.liquidityDelta = -int256(beforeLiquidity);
-
-                        i = actions[1];
-                        i.tickLower = beforeTick;
-                        i.tickUpper = params.tickLower;
-                        i.liquidityDelta = -netLiquidity;
-
-                        i = actions[2];
-                        i.tickLower = beforeTick;
-                        i.tickUpper = params.tickUpper;
-                        i.liquidityDelta = netLiquidity;
-                    }
-                }
-                bytes32 afterTickPtr = rightTickPtr.next();
-                if (afterTickPtr == 0) {
-                    if (int256(beforeLiquidity) + i.liquidityDelta == 0) {
-                        subPositions.remove(_tickToTreeKey(params.tickUpper));
-                        if (subPositions.size() == 0) {
+                        if (afterTickPtr == 0) {
+                            subPositions.remove(_tickToTreeKey(params.tickUpper));
                             delete tokenInfo.key;
                             _burn(tokenId);
                         }
+                        return actions.truncate(1);
                     }
-                } else {
+                }
+                if (afterTickPtr == 0) {
+                    if (int256(beforeLiquidity) + i.liquidityDelta == 0) {
+                        subPositions.remove(_tickToTreeKey(params.tickUpper));
+                        return actions.truncate(1);
+                    }
+                }
+
+                int24 beforeTick;
+                if (
+                    _getLiquidity(tokenId, key, beforeTick = _treeKeyToTick(beforeTickPtr.value()), params.tickLower)
+                        == netLiquidity
+                ) {
+                    i.liquidityDelta = -int256(beforeLiquidity);
+
+                    i = actions[1];
+                    i.tickLower = beforeTick;
+                    i.tickUpper = params.tickLower;
+                    i.liquidityDelta = -netLiquidity;
+
+                    i = actions[2];
+                    i.tickUpper = params.tickUpper;
+
                     int24 afterTick;
-                    if (_getLiquidity(tokenId, key, params.tickUpper, afterTick = _treeKeyToTick(afterTickPtr.value())) == netLiquidity) {
-                        // TODO:
+                    if (
+                        _getLiquidity(tokenId, key, params.tickUpper, afterTick = _treeKeyToTick(afterTickPtr.value()))
+                            == netLiquidity
+                    ) {
+                        i.tickLower = params.tickUpper;
+                        i.tickUpper = afterTick;
+                        i.liquidityDelta = -netLiquidity;
+
+                        i = actions[3];
+                        i.tickUpper = afterTick;
                     }
+
+                    i.tickLower = beforeTick;
+                    i.liquidityDelta = netLiquidity;
+
+                    // TODO: truncate and return
                 }
             } else {
                 // split the existing position that ranges from
@@ -289,8 +311,9 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                             // at the left terminus of the tick ranges. we no
                             // longer need to keep `leftTick` in the enumeration
                             subPositions.remove(_tickToTreeKey(params.tickLower));
-                            actions.truncate(2);
+                            return actions.truncate(2);
                         }
+                        return actions.truncate(3);
                     } else {
                         int24 beforeTick;
                         int256 combinedLiquidity;
@@ -316,8 +339,9 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                             subPositions.remove(_tickToTreeKey(i.tickLower));
 
                             (actions[3], actions[2]) = (actions[2], actions[3]);
+                            return actions;
                         } else {
-                            actions.truncate(3);
+                            return actions.truncate(3);
                         }
                     }
                 }
@@ -366,8 +390,9 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                         // range; we no longer need to keep `rightTick` in
                         // the enumeration
                         subPositions.remove(_tickToTreeKey(params.tickUpper));
-                        actions.truncate(2);
+                        return actions.truncate(2);
                     }
+                    return actions.truncate(3);
                 } else {
                     int24 afterTick;
                     int256 combinedLiquidity;
@@ -391,12 +416,30 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                         subPositions.remove(_tickToTreeKey(i.tickUpper));
 
                         (actions[3], actions[2]) = (actions[2], actions[3]);
+                        return actions;
                     } else {
-                        actions.truncate(3);
+                        return actions.truncate(3);
                     }
                 }
             }
         }
+    }
+
+    function modify(address payable recipient, uint256 tokenId, SimpleModifyLiquidityParams calldata params)
+        external
+        payable
+        nonReentrant
+        onlyOwnerOrApproved(tokenId)
+        returns (BalanceDelta delta)
+    {
+        if (params.liquidityDelta == 0) {
+            revert ZeroDelta();
+        }
+
+        TokenInfo storage tokenInfo = _tokenInfo[tokenId];
+        PoolKey memory key = tokenInfo.key;
+
+        SimpleModifyLiquidityParams[] memory actions = _populateActions(tokenId, params, tokenInfo, key);
 
         delta = abi.decode(
             POOL_MANAGER.unlock(abi.encode(msg.sender, recipient, key, bytes32(tokenId), actions)), (BalanceDelta)

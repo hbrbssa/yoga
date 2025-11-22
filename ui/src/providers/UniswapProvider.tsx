@@ -7,7 +7,7 @@ import { unichain } from "viem/chains";
 import { Token, ChainId, Ether, Percent, Price } from "@uniswap/sdk-core";
 import {
   Pool,
-  Position,
+  Position as UniPosition,
   V4PositionManager,
   priceToClosestTick,
   tickToPrice,
@@ -59,6 +59,15 @@ export interface PoolInfo {
   protocolFee: number;
   lpFee: number;
   liquidity: bigint;
+}
+
+// Position type
+export interface Position {
+  minPrice: number;
+  maxPrice: number;
+  amount0: string;
+  amount1: string;
+  lastInputToken: "eth" | "usdc" | null;
 }
 
 export interface PositionDetails {
@@ -279,14 +288,11 @@ export function UniswapProvider({ children }: { children: ReactNode }) {
         poolInfo.tick
       );
 
-      const MIN_TICK = -887272;
-      const MAX_TICK = 887272;
-
       // 3. Create Position from desired amounts
-      const position = Position.fromAmounts({
+      const position = UniPosition.fromAmounts({
         pool,
-        tickLower: nearestUsableTick(MIN_TICK, TICK_SPACING),
-        tickUpper: nearestUsableTick(MAX_TICK, TICK_SPACING),
+        tickLower: nearestUsableTick(params.tickLower, TICK_SPACING),
+        tickUpper: nearestUsableTick(params.tickUpper, TICK_SPACING),
         amount0: params.amount0Desired.toString(),
         amount1: params.amount1Desired.toString(),
         useFullPrecision: true,
@@ -319,6 +325,8 @@ export function UniswapProvider({ children }: { children: ReactNode }) {
           : ETH_NATIVE,
         hookData: "0x",
       };
+
+      //Now I need tick lower, tick upper, and liquidity to add
 
       console.log("mintOptions:", mintOptions);
 
@@ -501,7 +509,7 @@ export function UniswapProvider({ children }: { children: ReactNode }) {
         poolInfo.tick
       );
 
-      const position = new Position({
+      const position = new UniPosition({
         pool,
         tickLower: positionInfo.getTickLower(),
         tickUpper: positionInfo.getTickUpper(),
@@ -601,7 +609,7 @@ export function UniswapProvider({ children }: { children: ReactNode }) {
       );
 
       // 4. Create Position from desired amounts
-      const position = Position.fromAmounts({
+      const position = UniPosition.fromAmounts({
         pool,
         tickLower: positionDetails.tickLower,
         tickUpper: positionDetails.tickUpper,
@@ -697,7 +705,7 @@ export function UniswapProvider({ children }: { children: ReactNode }) {
       );
 
       // 4. Create Position instance with current liquidity
-      const position = new Position({
+      const position = new UniPosition({
         pool,
         tickLower: positionDetails.tickLower,
         tickUpper: positionDetails.tickUpper,
@@ -793,7 +801,7 @@ export function UniswapProvider({ children }: { children: ReactNode }) {
         poolInfo.tick
       );
 
-      const position = new Position({
+      const position = new UniPosition({
         pool,
         tickLower: positionDetails.tickLower,
         tickUpper: positionDetails.tickUpper,

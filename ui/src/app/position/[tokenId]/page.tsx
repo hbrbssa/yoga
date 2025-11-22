@@ -13,10 +13,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUniswap } from "@/providers/UniswapProvider";
-import type { PositionDetails } from "@/providers/UniswapProvider";
+import type { Position, PositionDetails } from "@/providers/UniswapProvider";
+import { MultiRangePriceSelector } from "@/components/MultiRangePriceSelector";
 import ethLogo from "cryptocurrency-icons/svg/color/eth.svg";
 import usdcLogo from "cryptocurrency-icons/svg/color/usdc.svg";
 import { ArrowLeft, Plus, Minus, Coins } from "lucide-react";
+import { Pool, Position as UniPosition } from "@uniswap/v4-sdk";
+import { Token, Ether, ChainId, CurrencyAmount } from "@uniswap/sdk-core";
+import SubPosition from "@/components/SubPosition";
+
+// Token constants
+const ETH_NATIVE = Ether.onChain(ChainId.UNICHAIN);
+const USDC_TOKEN = new Token(
+  ChainId.UNICHAIN,
+  "0x078D782b760474a361dDA0AF3839290b0EF57AD6",
+  6,
+  "USDC",
+  "USDC"
+);
+const FEE = 500;
+const TICK_SPACING = 10;
+const HOOKS = "0x0000000000000000000000000000000000000000";
 
 export default function PositionPage() {
   const params = useParams();
@@ -26,6 +43,10 @@ export default function PositionPage() {
     addLiquidity,
     removeLiquidity,
     collectFees,
+    getCurrentPrice,
+    priceToTick,
+    tickToPrice,
+    getPoolInfo,
     isMinting,
     isConfirming,
     isConfirmed,
@@ -34,15 +55,10 @@ export default function PositionPage() {
 
   const [position, setPosition] = useState<PositionDetails | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [currentPrice, setCurrentPrice] = useState<number | null>(null);
 
-  // Add liquidity state
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addAmount0, setAddAmount0] = useState("");
-  const [addAmount1, setAddAmount1] = useState("");
-
-  // Remove liquidity state
-  const [showRemoveForm, setShowRemoveForm] = useState(false);
-  const [removePercentage, setRemovePercentage] = useState("50");
+  // Sub-positions state
+  const [subPositions, setSubPositions] = useState<Position[]>([]);
 
   const tokenId = params.tokenId as string;
 
@@ -70,45 +86,40 @@ export default function PositionPage() {
 
   useEffect(() => {
     fetchPosition();
-  }, [tokenId]);
+    // Fetch current price
+    getCurrentPrice().then((price) => {
+      if (price) {
+        setCurrentPrice(price);
+      }
+    });
+  }, [tokenId, getCurrentPrice]);
+
+  // Initialize sub-positions from the actual position
+  useEffect(() => {
+    if (position && currentPrice) {
+      const minPrice = tickToPrice(position.tickLower);
+      const maxPrice = tickToPrice(position.tickUpper);
+
+      setSubPositions([
+        {
+          minPrice,
+          maxPrice,
+          amount0: "",
+          amount1: "",
+          lastInputToken: null,
+        },
+      ]);
+    }
+  }, [position, currentPrice, tickToPrice]);
 
   // Refresh position after successful transaction
   useEffect(() => {
     if (isConfirmed) {
       setTimeout(() => {
         fetchPosition();
-        setShowAddForm(false);
-        setShowRemoveForm(false);
       }, 2000);
     }
   }, [isConfirmed]);
-
-  const handleAddLiquidity = async () => {
-    if (!position) return;
-
-    try {
-      await addLiquidity({
-        tokenId: position.tokenId,
-        amount0Desired: BigInt(Math.floor(parseFloat(addAmount0) * 1e18)),
-        amount1Desired: BigInt(Math.floor(parseFloat(addAmount1) * 1e6)),
-      });
-    } catch (err) {
-      console.error("Failed to add liquidity:", err);
-    }
-  };
-
-  const handleRemoveLiquidity = async () => {
-    if (!position) return;
-
-    try {
-      await removeLiquidity({
-        tokenId: position.tokenId,
-        liquidityPercentage: parseFloat(removePercentage) / 100,
-      });
-    } catch (err) {
-      console.error("Failed to remove liquidity:", err);
-    }
-  };
 
   const handleCollectFees = async () => {
     if (!position) return;
@@ -211,9 +222,7 @@ export default function PositionPage() {
             <CardContent className="space-y-6">
               {/* Pool Information */}
               <div>
-                <h3 className="text-lg font-semibold mb-3">
-                  Pool Information
-                </h3>
+                <h3 className="text-lg font-semibold mb-3">Pool Information</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <p className="text-sm text-muted-foreground">Fee Tier</p>
@@ -225,7 +234,9 @@ export default function PositionPage() {
                     <p className="text-sm text-muted-foreground">
                       Tick Spacing
                     </p>
-                    <p className="font-medium">{position.poolKey.tickSpacing}</p>
+                    <p className="font-medium">
+                      {position.poolKey.tickSpacing}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -272,156 +283,50 @@ export default function PositionPage() {
             </CardContent>
           </Card>
 
-          {/* Quick Actions */}
-          <div className="grid grid-cols-3 gap-4">
-            <Button
-              onClick={() => {
-                setShowAddForm(!showAddForm);
-                setShowRemoveForm(false);
-              }}
-              variant="outline"
-              className="h-auto py-4"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add Liquidity
-            </Button>
-            <Button
-              onClick={() => {
-                setShowRemoveForm(!showRemoveForm);
-                setShowAddForm(false);
-              }}
-              variant="outline"
-              className="h-auto py-4"
-            >
-              <Minus className="mr-2 h-4 w-4" />
-              Remove Liquidity
-            </Button>
-            <Button
-              onClick={handleCollectFees}
-              disabled={isMinting || isConfirming}
-              variant="outline"
-              className="h-auto py-4"
-            >
-              <Coins className="mr-2 h-4 w-4" />
-              Collect Fees
-            </Button>
-          </div>
-
-          {/* Add Liquidity Form */}
-          {showAddForm && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Add Liquidity</CardTitle>
-                <CardDescription>
-                  Increase your position size by adding more tokens
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="addAmount0">ETH Amount</Label>
-                  <Input
-                    id="addAmount0"
-                    type="number"
-                    step="0.0001"
-                    value={addAmount0}
-                    onChange={(e) => setAddAmount0(e.target.value)}
-                    placeholder="0.001"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="addAmount1">USDC Amount</Label>
-                  <Input
-                    id="addAmount1"
-                    type="number"
-                    step="0.01"
-                    value={addAmount1}
-                    onChange={(e) => setAddAmount1(e.target.value)}
-                    placeholder="1.0"
-                  />
-                </div>
-                <Button
-                  onClick={handleAddLiquidity}
-                  disabled={
-                    isMinting ||
-                    isConfirming ||
-                    !addAmount0 ||
-                    !addAmount1
-                  }
-                  className="w-full"
-                >
-                  {isMinting || isConfirming
-                    ? "Processing..."
-                    : "Add Liquidity"}
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Remove Liquidity Form */}
-          {showRemoveForm && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Remove Liquidity</CardTitle>
-                <CardDescription>
-                  Withdraw tokens from your position
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="removePercentage">
-                    Percentage to Remove: {removePercentage}%
-                  </Label>
-                  <Input
-                    id="removePercentage"
-                    type="range"
-                    min="1"
-                    max="100"
-                    value={removePercentage}
-                    onChange={(e) => setRemovePercentage(e.target.value)}
-                  />
-                  <div className="flex gap-2 justify-between mt-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setRemovePercentage("25")}
-                    >
-                      25%
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setRemovePercentage("50")}
-                    >
-                      50%
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setRemovePercentage("75")}
-                    >
-                      75%
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setRemovePercentage("100")}
-                    >
-                      Max
-                    </Button>
+          {/* Overall Position Visualization */}
+          {currentPrice && subPositions.length > 0 && (
+            <div className="my-4">
+              <Card>
+                <CardHeader>
+                  <div>
+                    <CardTitle>Position Overview</CardTitle>
+                    <CardDescription>
+                      Your position contains {subPositions.length} contiguous
+                      sub-position{subPositions.length > 1 ? "s" : ""}
+                    </CardDescription>
                   </div>
-                </div>
-                <Button
-                  onClick={handleRemoveLiquidity}
-                  disabled={isMinting || isConfirming}
-                  className="w-full"
-                  variant="destructive"
-                >
-                  {isMinting || isConfirming
-                    ? "Processing..."
-                    : "Remove Liquidity"}
-                </Button>
-              </CardContent>
-            </Card>
+                </CardHeader>
+                <CardContent>
+                  <MultiRangePriceSelector
+                    currentPrice={currentPrice}
+                    subPositions={subPositions.map((sp) => ({
+                      minPrice: sp.minPrice,
+                      maxPrice: sp.maxPrice,
+                      amount0: sp.amount0,
+                      amount1: sp.amount1,
+                      lastInputToken: "eth" as const,
+                    }))}
+                    onRangeChange={() => {}}
+                    handleAutoRebalance={() => {}}
+                    tokenSymbol="ETH/USDC"
+                    modifyPosition={true}
+                  />
+                  {/* Sub-Position Cards */}
+                  {currentPrice && subPositions.length > 0 && (
+                    <div className="space-y-3">
+                      {subPositions.map((subPos, index) => (
+                        <SubPosition
+                          index={index}
+                          minPrice={subPos.minPrice}
+                          maxPrice={subPos.maxPrice}
+                          currentPrice={currentPrice}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           )}
         </div>
       </div>

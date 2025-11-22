@@ -32,14 +32,19 @@ library CurrencySafeTransferLib {
     }
 }
 
-contract Yoga is IERC165, IUnlockCallback, ERC721 /*, MultiCallContext */, ReentrancyGuardTransient {
+contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ ReentrancyGuardTransient {
     using CurrencySafeTransferLib for Currency;
 
-    IPoolManager public constant POOL_MANAGER = IPoolManager(0x1f98400000000000000000000000000000000004);
+    IPoolManager public constant POOL_MANAGER = IPoolManager(0x1F98400000000000000000000000000000000004);
 
     uint256 public nextTokenid = 1;
 
-    function mint(PoolKey calldata key, SimpleModifyLiquidityParams calldata params) external nonReentrant returns (uint256 tokenId) {
+    function mint(PoolKey calldata key, SimpleModifyLiquidityParams calldata params)
+        external
+        payable
+        nonReentrant
+        returns (uint256 tokenId)
+    {
         unchecked {
             tokenId = nextTokenId++;
         }
@@ -67,7 +72,13 @@ contract Yoga is IERC165, IUnlockCallback, ERC721 /*, MultiCallContext */, Reent
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
         require(msg.sender == address(POOL_MANAGER));
-        (address owner, address payable recipient, PoolKey memory key, bytes32 salt, SimpleModifyLiquidityParams[] memory params) = abi.decode(data, (address, address payable, PoolKey, bytes32, SimpleModifyLiquidityParams[]));
+        (
+            address owner,
+            address payable recipient,
+            PoolKey memory key,
+            bytes32 salt,
+            SimpleModifyLiquidityParams[] memory params
+        ) = abi.decode(data, (address, address payable, PoolKey, bytes32, SimpleModifyLiquidityParams[]));
 
         BalanceDelta delta;
         ModifyLiquidityParams memory managerParams;
@@ -77,7 +88,7 @@ contract Yoga is IERC165, IUnlockCallback, ERC721 /*, MultiCallContext */, Reent
             managerParams.tickLower = simpleParams.tickLower;
             managerParams.tickUpper = simpleParams.tickUpper;
             managerParams.liquidityDelta = simpleParams.liquidityDelta;
-            (BalanceDelta callerDelta, ) = POOL_MANAGER.modifyLiquidity(key, managerParams, ""); // TODO: hookData
+            (BalanceDelta callerDelta,) = POOL_MANAGER.modifyLiquidity(key, managerParams, ""); // TODO: hookData
             delta += callerDelta;
         }
 

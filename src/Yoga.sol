@@ -14,6 +14,8 @@ import {PoolKey} from "@uniswapv4/types/PoolKey.sol";
 import {ModifyLiquidityParams} from "@uniswapv4/types/PoolOperation.sol";
 import {IPoolManager} from "@uniswapv4/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "@uniswapv4/interfaces/IUnlockCallback.sol";
+import {Position} from "@uniswapv4/libraries/Position.sol";
+import {StateLibrary} from "@uniswapv4/libraries/StateLibrary.sol";
 
 //import {MultiCallContext} from "lib/MultiCallContext.sol";
 
@@ -87,7 +89,10 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
 
         SimpleModifyLiquidityParams[] memory paramsArray = new SimpleModifyLiquidityParams[](1);
         paramsArray[0] = params;
-        delta = abi.decode(POOL_MANAGER.unlock(abi.encode(msg.sender, payable(msg.sender), key, bytes32(tokenId), params)), (BalanceDelta));
+        delta = abi.decode(
+            POOL_MANAGER.unlock(abi.encode(msg.sender, payable(msg.sender), key, bytes32(tokenId), params)),
+            (BalanceDelta)
+        );
 
         _safeMint(msg.sender, tokenId);
         if (address(this).balance != 0) {
@@ -95,7 +100,13 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
         }
     }
 
-    function modify(uint256 tokenId, PoolKey calldata key, SimpleModifyLiquidityParams calldata params) external payable nonReentrant onlyOwnerOrApproved(tokenId) returns (BalanceDelta delta) {
+    function modify(uint256 tokenId, PoolKey calldata key, SimpleModifyLiquidityParams calldata params)
+        external
+        payable
+        nonReentrant
+        onlyOwnerOrApproved(tokenId)
+        returns (BalanceDelta delta)
+    {
         SubPositions storage subPositions = _subPositions[tokenId];
         int24 leftTick = _treeKeyToTick(subPositions.tree.nearestBefore(_tickToTreeKey(params.tickLower)).value());
 
@@ -105,17 +116,29 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                 // extend position on the right
 
             } else {
-                if (... == -params.liquidityDelta) {
+                if (
+                    StateLibrary.getPositionLiquidity(
+                        POOL_MANAGER,
+                        key.toId(),
+                        Position.calculateePositionKey(address(this), params.tickLower, rightTick, bytes32(tokenid))
+                    ) == -params.liquidityDelta
+                ) {
                     // close the left portion of a subposition
 
                 }
-                // mutate subposition on the left (params.tickUpper is the split point)
+                // mutate subposition on the left (params.tickUpper is the split
+                // point)
 
-                // TODO: merge the new left subposition with the next-rightward subposition if they have the same liquidity
+                // TODO: merge the new left subposition with the next-rightward
+                // subposition if they have the same liquidity
             }
         } else {
-            if (_treeKeyToTick(subPositions.tree.nearestAfter(_tickToTreeKey(params.tickUpper)).value()) != params.tickUpper) {
-                // tried to mutate multiple subpositions, make 2 splits of subpositions, or extend the position on both ends
+            if (
+                _treeKeyToTick(subPositions.tree.nearestAfter(_tickToTreeKey(params.tickUpper)).value())
+                    != params.tickUpper
+            ) {
+                // tried to mutate multiple subpositions, make 2 splits of
+                // subpositions, or extend the position on both ends
                 revert SplitTooComplicated();
             }
 
@@ -123,13 +146,21 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                 // extend position on the left
 
             } else {
-                if (... == -params.liquidityDelta) {
+                if (
+                    StateLibrary.getPositionLiquidity(
+                        POOL_MANAGER,
+                        key.toId(),
+                        Position.calculateePositionKey(address(this), leftTick, params.tickUpper, bytes32(tokenid))
+                    ) == -params.liquidityDelta
+                ) {
                     // close the right portion of a subposition
 
                 }
-                // mutate subposition on the right (params.tickLower is the split point)
+                // mutate subposition on the right (params.tickLower is the
+                // split point)
 
-                // TODO: merge the new right subposition with the next-rightward subposition if they have the same liquidity
+                // TODO: merge the new right subposition with the next-rightward
+                // subposition if they have the same liquidity
             }
         }
 

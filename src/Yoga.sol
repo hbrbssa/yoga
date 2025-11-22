@@ -244,6 +244,7 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                     _getLiquidity(tokenId, key, beforeTick = _treeKeyToTick(beforeTickPtr.value()), params.tickLower)
                         == netLiquidity
                 ) {
+                    subPositions.remove(_tickToTreeKey(params.tickLower));
                     i.liquidityDelta = -int256(beforeLiquidity);
 
                     i = actions[1];
@@ -251,27 +252,56 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
                     i.tickUpper = params.tickLower;
                     i.liquidityDelta = -netLiquidity;
 
-                    i = actions[2];
-                    i.tickUpper = params.tickUpper;
-
                     int24 afterTick;
                     if (
                         _getLiquidity(tokenId, key, params.tickUpper, afterTick = _treeKeyToTick(afterTickPtr.value()))
                             == netLiquidity
                     ) {
+                        subPositions.remove(_tickToTreeKey(params.tickUpper));
+
+                        i = actions[2];
                         i.tickLower = params.tickUpper;
                         i.tickUpper = afterTick;
                         i.liquidityDelta = -netLiquidity;
 
                         i = actions[3];
+                        i.tickLower = beforeTick;
                         i.tickUpper = afterTick;
+                        i.liquidityDelta = netLiquidity;
+
+                        return actions;
+                    } else {
+                        i = actions[2];
+                        i.tickLower = beforeTick;
+                        i.tickUpper = params.tickUpper;
+                        i.liquidityDelta = netLiquidity;
+                        return actions.truncate(3);
                     }
-
-                    i.tickLower = beforeTick;
-                    i.liquidityDelta = netLiquidity;
-
-                    // TODO: truncate and return
                 }
+
+                {
+                    int24 afterTick;
+                    if (
+                        _getLiquidity(tokenId, key, params.tickUpper, afterTick = _treeKeyToTick(afterTickPtr.value()))
+                            == netLiquidity
+                    ) {
+                        subPositions.remove(_tickToTreeKey(params.tickUpper));
+                        i.liquidityDelta = -int256(beforeLiquidity);
+
+                        i = actions[1];
+                        i.tickLower = params.tickUpper;
+                        i.tickUpper = afterTick;
+                        i.liquidityDelta = -netLiquidity;
+
+                        i = actions[2];
+                        i.tickLower = params.tickLower;
+                        i.tickUpper = afterTick;
+                        i.liquidityDelta = netLiquidity;
+                        return actions.truncate(3);
+                    }
+                }
+
+                return actions.truncate(1);
             } else {
                 // split the existing position that ranges from
                 // `params.tickLower` to `rightTick` into two new positions that

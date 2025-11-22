@@ -53,7 +53,13 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
 
     function _tickToTreeKey(int24 tick) private pure returns (uint24) {
         unchecked {
-            return tick - (_MIN_TICK - 1);
+            return uint24(tick - (_MIN_TICK - 1));
+        }
+    }
+
+    function _treeKeyToTick(uint24 treeKey) private pure returns (int24) {
+        unchecked {
+            return int24(tick) + (_MIN_TICK - 1);
         }
     }
 
@@ -122,5 +128,45 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
         _settle(owner, recipient, key.currency1, delta.amount1());
 
         return "";
+    }
+
+    function getTicks(uint256 tokenId) external view returns (int24[] memory) {
+        SubPositions storage subPositions = _subPositions[tokenId];
+        uint24 lastTick = subPositions.lastTick;
+
+        // allocate an extra word to store the indirection offset for the return
+        assembly ("memory-safe") {
+            mstore(0x40, add(0x20, mload(0x40)))
+        }
+
+        // walk the tree
+        uint256[] memory result = subPositions.tree.values();
+
+        // return
+        assembly ("memory-safe") {
+            // increase the length of `result` to store `lastTick`
+            let len := mload(result)
+            len := add(0x01, len)
+            mstore(result, len)
+            // insert `lastTick` at the end of the array
+            len := shl(0x05, len)
+            mstore(add(len, result), sub(lastTick, 887273))
+            // we don't bother to increase the free memory pointer because this
+            // block does not return to Solidity
+
+            // format each tree key as a tick
+            for {
+                let i := add(0x20, result)
+                let end := add(len, i)
+            } xor(i, end) { i := add(0x20, i) } {
+                // tick conversion
+                mstore(i, sub(mload(i), 887273))
+            }
+
+            // return
+            result := sub(result, 0x20)
+            mstore(result, 0x20)
+            return(result, add(0x40, len))
+        }
     }
 }

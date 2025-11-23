@@ -77,6 +77,11 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
         _;
     }
 
+    modifier onlyPoolManager() {
+        require(msg.sender == address(POOL_MANAGER));
+        _;
+    }
+
     IPoolManager public constant POOL_MANAGER = IPoolManager(0x1F98400000000000000000000000000000000004);
 
     function name() public pure override returns (string memory) {
@@ -571,8 +576,7 @@ contract Yoga is IERC165, IUnlockCallback, ERC721, /*, MultiCallContext */ Reent
         }
     }
 
-    function unlockCallback(bytes calldata data) external returns (bytes memory) {
-        require(msg.sender == address(POOL_MANAGER));
+    function unlockCallback(bytes calldata data) external onlyPoolManager returns (bytes memory) {
         (
             address owner,
             address payable recipient,
